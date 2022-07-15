@@ -9,7 +9,7 @@ namespace Arctium.WoW.Launcher.Misc;
 
 static class LaunchOptions
 {
-    public static Option<GameVersion> Version = new("--version", () => GameVersion.Retail);
+    public static Option<GameVersion> Version = new("--version", () => GameVersion.Beta);
     public static Option<string> GamePath = new("--path");
     public static Option<string> GameBinary = new("--binary");
     public static Option<bool> KeepCache = new("--keepcache", () => true);

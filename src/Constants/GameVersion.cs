@@ -4,8 +4,6 @@ namespace Arctium.WoW.Launcher.Constants;
 
 enum GameVersion
 {
-    Retail,
-    Classic,
-    ClassicEra
+    Beta,
 }
 

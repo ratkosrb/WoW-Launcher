@@ -15,13 +15,9 @@ class Launcher
         var (SubFolder, BinaryName, MajorGameVersion, MinGameBuild) = gameVersion switch
         {
 #if x64
-            GameVersion.Retail => ("_retail_", "Wow.exe", 9, 37862),
-            GameVersion.Classic => ("_classic_", "WowClassic.exe", 2, 39926),
-            GameVersion.ClassicEra => ("_classic_era_", "WowClassic.exe", 1, 40347),
+            GameVersion.Beta => ("_beta_", "WowB.exe", 10, 44649),
 #elif ARM64
-            GameVersion.Retail => ("_retail_", "Wow-ARM64.exe", 9, 37862),
-            GameVersion.Classic => ("_classic_", "WowClassic-arm64.exe", 2, 39926),
-            GameVersion.ClassicEra => ("_classic_era_", "WowClassic-arm64.exe", 1, 40347),
+            GameVersion.Beta => ("_beta_", "WowB-ARM64.exe", 10, 44649),
 #endif
             _ => throw new NotImplementedException("Invalid game version specified."),
 
@@ -177,7 +173,8 @@ class Launcher
                     Task.WaitAll(new[]
                     {
                         memory.QueuePatch(Patterns.Windows.CertBundle, Patches.Windows.CertBundle, "CertBundle"),
-                        memory.QueuePatch(Patterns.Windows.CertCommonName, Patches.Windows.CertCommonName, "CertCommonName", 5)
+                        memory.QueuePatch(Patterns.Windows.CertCommonName, Patches.Windows.CertCommonName, "CertCommonName", 5),
+                        memory.QueuePatch(Patterns.Windows.DisableED25519, Patches.Windows.CertCommonName, "Disable ED25519", 8)
                     }, Program.CancellationTokenSource.Token);
 #if CUSTOM_FILES
                     Task.WaitAll(new[]
