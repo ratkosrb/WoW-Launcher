@@ -4,38 +4,48 @@
 using System.CommandLine;
 using System.CommandLine.Builder;
 using System.CommandLine.Parsing;
+using System.IO;
 
-namespace Arctium.WoW.Launcher.Misc;
-
-static class LaunchOptions
+namespace Arctium.WoW.Launcher.Misc
 {
-    public static Option<GameVersion> Version = new("--version", () => GameVersion.Retail);
-    public static Option<string> GamePath = new("--path");
-    public static Option<string> GameBinary = new("--binary");
-    public static Option<bool> KeepCache = new("--keepcache", () => true);
-
-    public static Parser Instance => new CommandLineBuilder(ConfigureCommandLine(RootCommand))
-        .UseHelp()
-        .UseParseDirective()
-        .CancelOnProcessTermination()
-        .UseParseErrorReporting()
-        .UseSuggestDirective()
-        .Build();
-
-    public static RootCommand RootCommand = new("Arctium\0WoW\0Launcher")
+    static class LaunchOptions
     {
-        Version,
-        GamePath,
-        GameBinary,
-        KeepCache
-    };
+        private static GameVersion GetDefaultVersion()
+        {
+            if (Directory.Exists("_classic_era_"))
+                return GameVersion.ClassicEra;
+            if (Directory.Exists("_classic_"))
+                return GameVersion.Classic;
+            return GameVersion.Retail;
+        }
 
-    static Command ConfigureCommandLine(Command rootCommand)
-    {
-        // Do not show errors for unknown command line parameters.
-        rootCommand.TreatUnmatchedTokensAsErrors = false;
+        public static Option<GameVersion> Version = new("--version", () => GetDefaultVersion());
+        public static Option<string> GamePath = new("--path");
+        public static Option<string> GameBinary = new("--binary");
+        public static Option<bool> KeepCache = new("--keepcache", () => true);
 
-        return rootCommand;
+        public static Parser Instance => new CommandLineBuilder(ConfigureCommandLine(RootCommand))
+            .UseHelp()
+            .UseParseDirective()
+            .CancelOnProcessTermination()
+            .UseParseErrorReporting()
+            .UseSuggestDirective()
+            .Build();
+
+        public static RootCommand RootCommand = new("Arctium\0WoW\0Launcher")
+        {
+            Version,
+            GamePath,
+            GameBinary,
+            KeepCache
+        };
+
+        static Command ConfigureCommandLine(Command rootCommand)
+        {
+            // Do not show errors for unknown command line parameters.
+            rootCommand.TreatUnmatchedTokensAsErrors = false;
+
+            return rootCommand;
+        }
     }
 }
-

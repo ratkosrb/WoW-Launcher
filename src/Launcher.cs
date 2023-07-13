@@ -1,366 +1,370 @@
 ﻿// Copyright (c) Arctium.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System;
 using System.CommandLine.Parsing;
-
+using System.IO;
+using System.Linq;
+using System.Threading.Tasks;
 using static Arctium.WoW.Launcher.Misc.Helpers;
 
-namespace Arctium.WoW.Launcher;
-
-class Launcher
+namespace Arctium.WoW.Launcher
 {
-    public static string PrepareGameLaunch(ParseResult commandLineResult)
+    class Launcher
     {
-        var gameVersion = commandLineResult.GetValueForOption(LaunchOptions.Version);
-        var (SubFolder, BinaryName, MajorGameVersion, MinGameBuild) = gameVersion switch
+        public static string PrepareGameLaunch(ParseResult commandLineResult)
         {
-#if x64
-            GameVersion.Retail => ("_retail_", "Wow.exe", 9, 37862),
-            GameVersion.Classic => ("_classic_", "WowClassic.exe", 2, 39926),
-            GameVersion.ClassicEra => ("_classic_era_", "WowClassic.exe", 1, 40347),
-#elif ARM64
-            GameVersion.Retail => ("_retail_", "Wow-ARM64.exe", 9, 37862),
-            GameVersion.Classic => ("_classic_", "WowClassic-arm64.exe", 2, 39926),
-            GameVersion.ClassicEra => ("_classic_era_", "WowClassic-arm64.exe", 1, 40347),
-#endif
-            _ => throw new NotImplementedException("Invalid game version specified."),
+            var gameVersion = commandLineResult.GetValueForOption(LaunchOptions.Version);
+            var (SubFolder, BinaryName, MajorGameVersion, MinGameBuild) = gameVersion switch
+            {
+    #if x64
+                GameVersion.Retail => ("_retail_", "Wow.exe", 9, 37862),
+                GameVersion.Classic => ("_classic_", "WowClassic.exe", 2, 39926),
+                GameVersion.ClassicEra => ("_classic_era_", "WowClassic.exe", 1, 40347),
+    #elif ARM64
+                GameVersion.Retail => ("_retail_", "Wow-ARM64.exe", 9, 37862),
+                GameVersion.Classic => ("_classic_", "WowClassic-arm64.exe", 2, 39926),
+                GameVersion.ClassicEra => ("_classic_era_", "WowClassic-arm64.exe", 1, 40347),
+    #endif
+                _ => throw new NotImplementedException("Invalid game version specified."),
 
-        };
+            };
 
-        Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.ForegroundColor = ConsoleColor.Yellow;
 
-        Console.WriteLine($"Mode: Custom Server ({gameVersion})");
-        Console.WriteLine();
-        Console.ResetColor();
+            Console.WriteLine($"Mode: Custom Server ({gameVersion})");
+            Console.WriteLine();
+            Console.ResetColor();
 
-        var currentFolder = AppDomain.CurrentDomain.BaseDirectory;
-        var gameFolder = $"{currentFolder}/{SubFolder}";
+            var currentFolder = AppDomain.CurrentDomain.BaseDirectory;
+            var gameFolder = $"{currentFolder}/{SubFolder}";
 
-        if (commandLineResult.HasOption(LaunchOptions.GameBinary))
-            BinaryName = commandLineResult.GetValueForOption(LaunchOptions.GameBinary);
+            if (commandLineResult.HasOption(LaunchOptions.GameBinary))
+                BinaryName = commandLineResult.GetValueForOption(LaunchOptions.GameBinary);
 
-        var gameBinaryPath = $"{gameFolder}/{BinaryName}";
+            var gameBinaryPath = $"{gameFolder}/{BinaryName}";
 
-        if (commandLineResult.HasOption(LaunchOptions.GamePath))
-        {
-            gameFolder = commandLineResult.GetValueForOption(LaunchOptions.GamePath);
-            gameBinaryPath = $"{gameFolder}/{BinaryName}";
+            if (commandLineResult.HasOption(LaunchOptions.GamePath))
+            {
+                gameFolder = commandLineResult.GetValueForOption(LaunchOptions.GamePath);
+                gameBinaryPath = $"{gameFolder}/{BinaryName}";
+            }
+            else if (!File.Exists(gameBinaryPath))
+            {
+                // Also support game installations without branch sub folders.
+                gameFolder = currentFolder;
+                gameBinaryPath = $"{gameFolder}/{BinaryName}";
+            }
+
+            if (!File.Exists(gameBinaryPath) || GetVersionValueFromClient(gameBinaryPath, 3) != MajorGameVersion)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"[Error] No {gameVersion} client found.");
+
+                return String.Empty;
+            }
+
+            var gameClientBuild = GetVersionValueFromClient(gameBinaryPath, 0);
+
+            if (gameClientBuild < MinGameBuild && gameClientBuild != 0)
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($"Your found client version {gameClientBuild} is not supported.");
+                Console.WriteLine($"The minimum required build is {MinGameBuild}");
+
+                return String.Empty;
+            }
+
+            // Delete the cache folder by default.
+            if (!commandLineResult.GetValueForOption(LaunchOptions.KeepCache))
+            {
+                try
+                {
+                    // Trying to delete the cache folder.
+                    Directory.Delete($"{gameFolder}/Cache", true);
+                }
+                catch (Exception)
+                {
+                    // We don't care if it worked. Swallow it!
+                }
+            }
+
+            return gameBinaryPath;
         }
-        else if (!File.Exists(gameBinaryPath))
+
+        public static bool LaunchGame(string appPath, string gameCommandLine)
         {
-            // Also support game installations without branch sub folders.
-            gameFolder = currentFolder;
-            gameBinaryPath = $"{gameFolder}/{BinaryName}";
-        }
+            var startupInfo = new StartupInfo();
+            var processInfo = new ProcessInformation();
 
-        if (!File.Exists(gameBinaryPath) || GetVersionValueFromClient(gameBinaryPath, 3) != MajorGameVersion)
-        {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"[Error] No {gameVersion} client found.");
-
-            return String.Empty;
-        }
-
-        var gameClientBuild = GetVersionValueFromClient(gameBinaryPath, 0);
-
-        if (gameClientBuild < MinGameBuild && gameClientBuild != 0)
-        {
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"Your found client version {gameClientBuild} is not supported.");
-            Console.WriteLine($"The minimum required build is {MinGameBuild}");
-
-            return String.Empty;
-        }
-
-        // Delete the cache folder by default.
-        if (!commandLineResult.GetValueForOption(LaunchOptions.KeepCache))
-        {
             try
             {
-                // Trying to delete the cache folder.
-                Directory.Delete($"{gameFolder}/Cache", true);
-            }
-            catch (Exception)
-            {
-                // We don't care if it worked. Swallow it!
-            }
-        }
+                Console.ForegroundColor = ConsoleColor.White;
+                Console.WriteLine("Starting WoW client...");
 
-        return gameBinaryPath;
-    }
+                var createSuccess = NativeWindows.CreateProcess(null, $"{appPath} {gameCommandLine}", 0, 0, false, 4U, 0, new FileInfo(appPath)?.DirectoryName, ref startupInfo, out processInfo);
 
-    public static bool LaunchGame(string appPath, string gameCommandLine)
-    {
-        var startupInfo = new StartupInfo();
-        var processInfo = new ProcessInformation();
+                // On some systems we have to launch the game with the application name used.
+                if (!createSuccess)
+                    createSuccess = NativeWindows.CreateProcess(appPath, $" {gameCommandLine}", 0, 0, false, 4U, 0, null, ref startupInfo, out processInfo);
 
-        try
-        {
-            Console.ForegroundColor = ConsoleColor.White;
-            Console.WriteLine("Starting WoW client...");
-
-            var createSuccess = NativeWindows.CreateProcess(null, $"{appPath} {gameCommandLine}", 0, 0, false, 4U, 0, new FileInfo(appPath)?.DirectoryName, ref startupInfo, out processInfo);
-
-            // On some systems we have to launch the game with the application name used.
-            if (!createSuccess)
-                createSuccess = NativeWindows.CreateProcess(appPath, $" {gameCommandLine}", 0, 0, false, 4U, 0, null, ref startupInfo, out processInfo);
-
-            // Start process with suspend flags.
-            if (createSuccess)
-            {
-                using var gameAppData = new MemoryStream(File.ReadAllBytes(appPath));
-
-                var memory = new WinMemory(processInfo, gameAppData.Length);
-
-                // Resume the process to initialize it.
-                NativeWindows.NtResumeProcess(processInfo.ProcessHandle);
-
-                var mbi = new MemoryBasicInformation();
-
-                // Wait for the memory region to be initialized.
-                while (NativeWindows.VirtualQueryEx(processInfo.ProcessHandle, memory.BaseAddress, out mbi, MemoryBasicInformation.Size) == 0 || mbi.RegionSize <= 0x1000)
-                { }
-
-                if (mbi.BaseAddress != 0)
+                // Start process with suspend flags.
+                if (createSuccess)
                 {
-                    NativeWindows.NtSuspendProcess(processInfo.ProcessHandle);
+                    using var gameAppData = new MemoryStream(File.ReadAllBytes(appPath));
 
-                    byte[] certBundleData = Convert.FromBase64String(Patches.Common.CertBundleData);
+                    var memory = new WinMemory(processInfo, gameAppData.Length);
 
-                    // Build the version URL from the game binary build.
-                    int wowBuild = GetVersionValueFromClient(appPath, 0);
-                    byte[] versionPatch = Patches.Common.GetVersionUrl(wowBuild);
-
-                    // Refresh the client data before patching.
-                    memory.RefreshMemoryData((int)gameAppData.Length);
-
-                    // We need to cache this here since we are using our RSA modulus as auth seed.
-                    var modulusOffset = memory.Data.FindPattern(Patterns.Common.SignatureModulus);
-
-                    // Wait for all direct memory patch tasks to complete,
-                    Task.WaitAll(new[]
-                    {
-                        memory.PatchMemory(Patterns.Common.CertBundle, certBundleData, "Certificate Bundle"),
-                        memory.PatchMemory(Patterns.Common.SignatureModulus, Patches.Common.SignatureModulus, "Certificate Signature Modulus"),
-                        memory.PatchMemory(Patterns.Common.ConnectToModulus, Patches.Common.Modulus, "ConnectTo Modulus"),
-                        memory.PatchMemory(Patterns.Common.ChangeProtocolModulus, Patches.Common.Modulus, "ChangeProtocol (GameCrypt) Modulus"),
-                        memory.PatchMemory(Patterns.Common.Portal, Patches.Common.Portal, "Login Portal"),
-                        memory.PatchMemory(Patterns.Common.VersionUrl, versionPatch, "Version URL"),
-                        memory.PatchMemory(Patterns.Windows.LauncherLogin, Patches.Windows.LauncherLogin, "Launcher Login Registry")
-                    }, Program.CancellationTokenSource.Token);
-
+                    // Resume the process to initialize it.
                     NativeWindows.NtResumeProcess(processInfo.ProcessHandle);
 
-                    WaitForUnpack(ref processInfo, memory, ref mbi);
+                    var mbi = new MemoryBasicInformation();
 
-                    // Generates a patch for the auth seed so we don't have to update them on each build.
-                    var authSeedFunctionOffset = GenerateAuthSeedFunctionPatch(memory, modulusOffset);
+                    // Wait for the memory region to be initialized.
+                    while (NativeWindows.VirtualQueryEx(processInfo.ProcessHandle, memory.BaseAddress, out mbi, MemoryBasicInformation.Size) == 0 || mbi.RegionSize <= 0x1000)
+                    { }
 
-#if x64
-                    Task.WaitAll(new[]
+                    if (mbi.BaseAddress != 0)
                     {
-                        memory.QueuePatch(authSeedFunctionOffset, Patches.Windows.AuthSeed, "CustomAuthSeedFunction"),
-                        memory.QueuePatch(Patterns.Windows.CertBundle, Patches.Windows.CertBundle, "CertBundle"),
-                        memory.QueuePatch(Patterns.Windows.CertCommonName, Patches.Windows.CertCommonName, "CertCommonName", 5)
-                    }, Program.CancellationTokenSource.Token);
-#if CUSTOM_FILES
-                    Task.WaitAll(new[]
-                    {
-                        memory.QueuePatch(Patterns.Windows.LoadByFileId, Patches.Windows.NoJump, "LoadByFileId", 6),
-                        memory.QueuePatch(Patterns.Windows.LoadByFilePath, Patches.Windows.NoJump, "LoadByFilePath", 3)
-                    }, Program.CancellationTokenSource.Token);
+                        NativeWindows.NtSuspendProcess(processInfo.ProcessHandle);
 
-                    var (idAlloc, stringAlloc) = ModLoader.LoadFileMappings(processInfo.ProcessHandle);
+                        byte[] certBundleData = Convert.FromBase64String(Patches.Common.CertBundleData);
 
-                    if (idAlloc != 0 && stringAlloc != 0)
-                    {
-                        if (!ModLoader.HookClient(memory, processInfo.ProcessHandle, idAlloc, stringAlloc))
-                            return false;
-                    }
-#endif
+                        // Build the version URL from the game binary build.
+                        int wowBuild = GetVersionValueFromClient(appPath, 0);
+                        byte[] versionPatch = Patches.Common.GetVersionUrl(wowBuild);
 
-#elif ARM64
-                    Task.WaitAll(new[]
-                    {
-                        memory.QueuePatch(Patterns.Windows.CertBundle, Patches.Windows.CertBundle, "CertBundle", 19),
-                        memory.QueuePatch(Patterns.Windows.CertCommonName, Patches.Windows.CertCommonName, "CertCommonName", 6),
-                    }, Program.CancellationTokenSource.Token);
-#endif
+                        // Refresh the client data before patching.
+                        memory.RefreshMemoryData((int)gameAppData.Length);
 
-                    NativeWindows.NtResumeProcess(processInfo.ProcessHandle);
+                        // We need to cache this here since we are using our RSA modulus as auth seed.
+                        var modulusOffset = memory.Data.FindPattern(Patterns.Common.SignatureModulus);
 
-                    if (memory.RemapAndPatch())
-                    {
-                        Console.WriteLine("Done :) ");
-
-                        Console.ForegroundColor = ConsoleColor.Green;
-                        Console.WriteLine("You can login now.");
-
-                        Console.ResetColor();
-
-                        return true;
-                    }
-                    else
-                    {
-                        Console.ForegroundColor = ConsoleColor.Red;
-                        Console.WriteLine("Error while launching the client.");
-
-                        NativeWindows.TerminateProcess(processInfo.ProcessHandle, 0);
-                    }
-                }
-            }
-        }
-        catch (Exception ex)
-        {
-            // Just print out the exception we have and kill the game process.
-            Console.WriteLine(ex);
-            Console.WriteLine(ex.StackTrace);
-
-            NativeWindows.TerminateProcess(processInfo.ProcessHandle, 0);
-        }
-        finally
-        {
-            NativeWindows.CloseHandle(processInfo.ProcessHandle);
-            NativeWindows.CloseHandle(processInfo.ThreadHandle);
-        }
-
-        return false;
-    }
-
-    static long GenerateAuthSeedFunctionPatch(WinMemory memory, long modulusOffset)
-    {
-        var authSeedLoadOffset = memory.Data.FindPattern(Patterns.Windows.AuthSeed);
-
-        if (authSeedLoadOffset == 0)
-            throw new InvalidDataException("authSeedLoadOffset");
-
-        var leaStartOffset = authSeedLoadOffset + 9;
-        var leaValue = Unsafe.ReadUnaligned<int>(ref memory.Data[leaStartOffset + 3]);
-        var authSeedWrapperOffset = leaStartOffset + leaValue + 7;
-        var jmpValue = Unsafe.ReadUnaligned<uint>(ref memory.Data[authSeedWrapperOffset + 6]);
-        var authSeedFunctionOffset = authSeedWrapperOffset + 5 + jmpValue + 5;
-
-        // Write the modulus offset to our custom get seed functions.
-        // Resulting static auth seed is: 179D3DC3235629D07113A9B3867F97A7
-        Unsafe.WriteUnaligned(ref Patches.Windows.AuthSeed[3], (uint)(modulusOffset - authSeedFunctionOffset - 7));
-
-        return authSeedFunctionOffset;
-    }
-
-    static void WaitForUnpack(ref ProcessInformation processInfo, WinMemory memory, ref MemoryBasicInformation mbi)
-    {
-        // Wait for client initialization.
-        var initOffset = memory?.Read(mbi.BaseAddress, (int)mbi.RegionSize)?.FindPattern(Patterns.Windows.Init) ?? 0;
-
-        while (initOffset == 0)
-        {
-            initOffset = memory?.Read(mbi.BaseAddress, (int)mbi.RegionSize)?.FindPattern(Patterns.Windows.Init) ?? 0;
-
-            Console.WriteLine("Waiting for client initialization...");
-        }
-
-        initOffset += BitConverter.ToUInt32(memory.Read(initOffset + memory.BaseAddress + 2, 4), 0) + 10;
-
-        while (memory?.Read(initOffset + memory.BaseAddress, 1)?[0] == null ||
-               memory?.Read(initOffset + memory.BaseAddress, 1)?[0] == 0)
-            memory.Data = memory.Read(mbi.BaseAddress, (int)mbi.RegionSize);
-
-        PrepareAntiCrash(memory, ref mbi, ref processInfo);
-
-        memory.RefreshMemoryData((int)mbi.RegionSize);
-    }
-
-    static void PrepareAntiCrash(WinMemory memory, ref MemoryBasicInformation mbi, ref ProcessInformation processInfo)
-    {
-        memory.RefreshMemoryData((int)mbi.RegionSize);
-
-        // Suspend the process and handle the patches.
-        NativeWindows.NtSuspendProcess(processInfo.ProcessHandle);
-
-        // Get Integrity check locations
-        var integrityOffsets = memory.Data.FindPattern(Patterns.Windows.Integrity, int.MaxValue, (int)mbi.RegionSize).ToArray();
-
-        // Encrypt integrity offsets and patches and add them to the patch list.
-        for (var i = 0; i < integrityOffsets.Length; i++)
-            memory.QueuePatch(integrityOffsets[i], Patches.Windows.Integrity, $"Integrity{i}");
-
-        // Get Integrity check locations
-        var integrityOffsets2 = memory.Data.FindPattern(Patterns.Windows.Integrity2, int.MaxValue, (int)mbi.RegionSize).ToArray();
-
-        // Encrypt integrity offsets and patches and add them to the patch list.
-        for (var i = 0; i < integrityOffsets2.Length; i++)
-            memory.QueuePatch(integrityOffsets2[i], Patches.Windows.Integrity, $"Integrity{integrityOffsets.Length + i}");
-
-        // Get Remap check locations.
-        var remapOffsets = memory.Data.FindPattern(Patterns.Windows.Remap, int.MaxValue, (int)mbi.RegionSize);
-        var lastAddress = 0;
-
-        foreach (var a in remapOffsets)
-        {
-            var instructionStart = (int)a + 4;
-            var instructionEnd = (int)a + 4 + 6;
-            var instructions = new byte[6];
-
-            Buffer.BlockCopy(memory.Data, instructionStart, instructions, 0, 6);
-
-            // Skip unconditional jumps.
-            if (memory.IsUnconditionalJump(instructions))
-                continue;
-
-            var operandValue = 0;
-
-            if (memory.IsShortJump(instructions))
-                operandValue = instructions[1] + 2;
-            else if (memory.IsJump(instructions))
-                operandValue = BitConverter.ToInt32(instructions, 2) + 6;
-            else
-                throw new InvalidDataException("Invalid operand value.");
-
-            var jumpToValue = a + operandValue + 4;
-            var tempPatches = new ConcurrentDictionary<string, (long, byte[])>();
-
-            // Find all references of real code parts inside the remap check functions.
-            Parallel.For(lastAddress, memory.Data.Length, i =>
-            {
-                if (memory.IsJump(memory.Data, i))
-                {
-                    var jumpOperand = BitConverter.ToInt32(memory.Data, i + 2);
-                    var jumpSize = (int)jumpToValue - i - 6;
-
-                    if (jumpOperand == jumpSize)
-                    {
-                        // Add 1 because we patch the instruction start.
-                        // This results in a shorter overall instruction length.
-                        var jumpBytes = new byte[] { 0xE9 }.Concat(BitConverter.GetBytes(jumpSize + 1)).ToArray();
-
-                        tempPatches.TryAdd($"Jump{i}", (i, jumpBytes));
-                    }
-                }
-                else if (memory.IsShortJump(memory.Data, i))
-                {
-                    var jumpOperand = memory.Data[i + 1];
-                    var jumpSize = (int)jumpToValue - i - 2;
-
-                    if (jumpOperand == jumpSize)
-                    {
-                        // Check for 0x48 here. This is an indicator for the test instructions.
-                        // Might need some better checks or future updates.
-                        if (memory.Data[i - 3] == 0x48)
+                        // Wait for all direct memory patch tasks to complete,
+                        Task.WaitAll(new[]
                         {
-                            var iBytes = BitConverter.GetBytes(i);
-                            var jumpBytes = new byte[] { 0xEB };
+                            memory.PatchMemory(Patterns.Common.CertBundle, certBundleData, "Certificate Bundle"),
+                            memory.PatchMemory(Patterns.Common.SignatureModulus, Patches.Common.SignatureModulus, "Certificate Signature Modulus"),
+                            memory.PatchMemory(Patterns.Common.ConnectToModulus, Patches.Common.Modulus, "ConnectTo Modulus"),
+                            memory.PatchMemory(Patterns.Common.ChangeProtocolModulus, Patches.Common.Modulus, "ChangeProtocol (GameCrypt) Modulus"),
+                            memory.PatchMemory(Patterns.Common.Portal, Patches.Common.Portal, "Login Portal"),
+                            memory.PatchMemory(Patterns.Common.VersionUrl, versionPatch, "Version URL"),
+                            memory.PatchMemory(Patterns.Windows.LauncherLogin, Patches.Windows.LauncherLogin, "Launcher Login Registry")
+                        }, Program.CancellationTokenSource.Token);
 
-                            tempPatches.TryAdd($"ShortJump{i}", (i, jumpBytes));
+                        NativeWindows.NtResumeProcess(processInfo.ProcessHandle);
+
+                        WaitForUnpack(ref processInfo, memory, ref mbi);
+
+                        // Generates a patch for the auth seed so we don't have to update them on each build.
+                        var authSeedFunctionOffset = GenerateAuthSeedFunctionPatch(memory, modulusOffset);
+
+    #if x64
+                        Task.WaitAll(new[]
+                        {
+                            memory.QueuePatch(authSeedFunctionOffset, Patches.Windows.AuthSeed, "CustomAuthSeedFunction"),
+                            memory.QueuePatch(Patterns.Windows.CertBundle, Patches.Windows.CertBundle, "CertBundle"),
+                            memory.QueuePatch(Patterns.Windows.CertCommonName, Patches.Windows.CertCommonName, "CertCommonName", 5)
+                        }, Program.CancellationTokenSource.Token);
+    #if CUSTOM_FILES
+                        Task.WaitAll(new[]
+                        {
+                            memory.QueuePatch(Patterns.Windows.LoadByFileId, Patches.Windows.NoJump, "LoadByFileId", 6),
+                            memory.QueuePatch(Patterns.Windows.LoadByFilePath, Patches.Windows.NoJump, "LoadByFilePath", 3)
+                        }, Program.CancellationTokenSource.Token);
+
+                        var (idAlloc, stringAlloc) = ModLoader.LoadFileMappings(processInfo.ProcessHandle);
+
+                        if (idAlloc != 0 && stringAlloc != 0)
+                        {
+                            if (!ModLoader.HookClient(memory, processInfo.ProcessHandle, idAlloc, stringAlloc))
+                                return false;
+                        }
+    #endif
+
+    #elif ARM64
+                        Task.WaitAll(new[]
+                        {
+                            memory.QueuePatch(Patterns.Windows.CertBundle, Patches.Windows.CertBundle, "CertBundle", 19),
+                            memory.QueuePatch(Patterns.Windows.CertCommonName, Patches.Windows.CertCommonName, "CertCommonName", 6),
+                        }, Program.CancellationTokenSource.Token);
+    #endif
+
+                        NativeWindows.NtResumeProcess(processInfo.ProcessHandle);
+
+                        if (memory.RemapAndPatch())
+                        {
+                            Console.WriteLine("Done :) ");
+
+                            Console.ForegroundColor = ConsoleColor.Green;
+                            Console.WriteLine("You can login now.");
+
+                            Console.ResetColor();
+
+                            return true;
+                        }
+                        else
+                        {
+                            Console.ForegroundColor = ConsoleColor.Red;
+                            Console.WriteLine("Error while launching the client.");
+
+                            NativeWindows.TerminateProcess(processInfo.ProcessHandle, 0);
                         }
                     }
                 }
-            });
+            }
+            catch (Exception ex)
+            {
+                // Just print out the exception we have and kill the game process.
+                Console.WriteLine(ex);
+                Console.WriteLine(ex.StackTrace);
 
-            // Add the remap crash patches to the patch list.
-            foreach (var p in tempPatches)
-                memory.QueuePatch(p.Value.Item1, p.Value.Item2, p.Key);
+                NativeWindows.TerminateProcess(processInfo.ProcessHandle, 0);
+            }
+            finally
+            {
+                NativeWindows.CloseHandle(processInfo.ProcessHandle);
+                NativeWindows.CloseHandle(processInfo.ThreadHandle);
+            }
 
-            lastAddress = (int)a;
+            return false;
+        }
+
+        static long GenerateAuthSeedFunctionPatch(WinMemory memory, long modulusOffset)
+        {
+            var authSeedLoadOffset = memory.Data.FindPattern(Patterns.Windows.AuthSeed);
+
+            if (authSeedLoadOffset == 0)
+                throw new InvalidDataException("authSeedLoadOffset");
+
+            var leaStartOffset = authSeedLoadOffset + 9;
+            var leaValue = Unsafe.ReadUnaligned<int>(ref memory.Data[leaStartOffset + 3]);
+            var authSeedWrapperOffset = leaStartOffset + leaValue + 7;
+            var jmpValue = Unsafe.ReadUnaligned<uint>(ref memory.Data[authSeedWrapperOffset + 6]);
+            var authSeedFunctionOffset = authSeedWrapperOffset + 5 + jmpValue + 5;
+
+            // Write the modulus offset to our custom get seed functions.
+            // Resulting static auth seed is: 179D3DC3235629D07113A9B3867F97A7
+            Unsafe.WriteUnaligned(ref Patches.Windows.AuthSeed[3], (uint)(modulusOffset - authSeedFunctionOffset - 7));
+
+            return authSeedFunctionOffset;
+        }
+
+        static void WaitForUnpack(ref ProcessInformation processInfo, WinMemory memory, ref MemoryBasicInformation mbi)
+        {
+            // Wait for client initialization.
+            var initOffset = memory?.Read(mbi.BaseAddress, (int)mbi.RegionSize)?.FindPattern(Patterns.Windows.Init) ?? 0;
+
+            while (initOffset == 0)
+            {
+                initOffset = memory?.Read(mbi.BaseAddress, (int)mbi.RegionSize)?.FindPattern(Patterns.Windows.Init) ?? 0;
+
+                Console.WriteLine("Waiting for client initialization...");
+            }
+
+            initOffset += BitConverter.ToUInt32(memory.Read(initOffset + memory.BaseAddress + 2, 4), 0) + 10;
+
+            while (memory?.Read(initOffset + memory.BaseAddress, 1)?[0] == null ||
+                   memory?.Read(initOffset + memory.BaseAddress, 1)?[0] == 0)
+                memory.Data = memory.Read(mbi.BaseAddress, (int)mbi.RegionSize);
+
+            PrepareAntiCrash(memory, ref mbi, ref processInfo);
+
+            memory.RefreshMemoryData((int)mbi.RegionSize);
+        }
+
+        static void PrepareAntiCrash(WinMemory memory, ref MemoryBasicInformation mbi, ref ProcessInformation processInfo)
+        {
+            memory.RefreshMemoryData((int)mbi.RegionSize);
+
+            // Suspend the process and handle the patches.
+            NativeWindows.NtSuspendProcess(processInfo.ProcessHandle);
+
+            // Get Integrity check locations
+            var integrityOffsets = memory.Data.FindPattern(Patterns.Windows.Integrity, int.MaxValue, (int)mbi.RegionSize).ToArray();
+
+            // Encrypt integrity offsets and patches and add them to the patch list.
+            for (var i = 0; i < integrityOffsets.Length; i++)
+                memory.QueuePatch(integrityOffsets[i], Patches.Windows.Integrity, $"Integrity{i}");
+
+            // Get Integrity check locations
+            var integrityOffsets2 = memory.Data.FindPattern(Patterns.Windows.Integrity2, int.MaxValue, (int)mbi.RegionSize).ToArray();
+
+            // Encrypt integrity offsets and patches and add them to the patch list.
+            for (var i = 0; i < integrityOffsets2.Length; i++)
+                memory.QueuePatch(integrityOffsets2[i], Patches.Windows.Integrity, $"Integrity{integrityOffsets.Length + i}");
+
+            // Get Remap check locations.
+            var remapOffsets = memory.Data.FindPattern(Patterns.Windows.Remap, int.MaxValue, (int)mbi.RegionSize);
+            var lastAddress = 0;
+
+            foreach (var a in remapOffsets)
+            {
+                var instructionStart = (int)a + 4;
+                var instructionEnd = (int)a + 4 + 6;
+                var instructions = new byte[6];
+
+                Buffer.BlockCopy(memory.Data, instructionStart, instructions, 0, 6);
+
+                // Skip unconditional jumps.
+                if (memory.IsUnconditionalJump(instructions))
+                    continue;
+
+                var operandValue = 0;
+
+                if (memory.IsShortJump(instructions))
+                    operandValue = instructions[1] + 2;
+                else if (memory.IsJump(instructions))
+                    operandValue = BitConverter.ToInt32(instructions, 2) + 6;
+                else
+                    throw new InvalidDataException("Invalid operand value.");
+
+                var jumpToValue = a + operandValue + 4;
+                var tempPatches = new ConcurrentDictionary<string, (long, byte[])>();
+
+                // Find all references of real code parts inside the remap check functions.
+                Parallel.For(lastAddress, memory.Data.Length, i =>
+                {
+                    if (memory.IsJump(memory.Data, i))
+                    {
+                        var jumpOperand = BitConverter.ToInt32(memory.Data, i + 2);
+                        var jumpSize = (int)jumpToValue - i - 6;
+
+                        if (jumpOperand == jumpSize)
+                        {
+                            // Add 1 because we patch the instruction start.
+                            // This results in a shorter overall instruction length.
+                            var jumpBytes = new byte[] { 0xE9 }.Concat(BitConverter.GetBytes(jumpSize + 1)).ToArray();
+
+                            tempPatches.TryAdd($"Jump{i}", (i, jumpBytes));
+                        }
+                    }
+                    else if (memory.IsShortJump(memory.Data, i))
+                    {
+                        var jumpOperand = memory.Data[i + 1];
+                        var jumpSize = (int)jumpToValue - i - 2;
+
+                        if (jumpOperand == jumpSize)
+                        {
+                            // Check for 0x48 here. This is an indicator for the test instructions.
+                            // Might need some better checks or future updates.
+                            if (memory.Data[i - 3] == 0x48)
+                            {
+                                var iBytes = BitConverter.GetBytes(i);
+                                var jumpBytes = new byte[] { 0xEB };
+
+                                tempPatches.TryAdd($"ShortJump{i}", (i, jumpBytes));
+                            }
+                        }
+                    }
+                });
+
+                // Add the remap crash patches to the patch list.
+                foreach (var p in tempPatches)
+                    memory.QueuePatch(p.Value.Item1, p.Value.Item2, p.Key);
+
+                lastAddress = (int)a;
+            }
         }
     }
 }

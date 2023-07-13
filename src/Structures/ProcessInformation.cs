@@ -1,14 +1,15 @@
 ﻿// Copyright (c) Arctium.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-namespace Arctium.WoW.Launcher.Structures;
-
-struct ProcessInformation
+namespace Arctium.WoW.Launcher.Structures
 {
-    public nint ProcessHandle;
-    public nint ThreadHandle;
-    public uint ProcessId;
-    public uint ThreadId;
+    struct ProcessInformation
+    {
+        public nint ProcessHandle;
+        public nint ThreadHandle;
+        public uint ProcessId;
+        public uint ThreadId;
 
-    public int Size => Marshal.SizeOf(typeof(ProcessInformation));
+        public int Size => Marshal.SizeOf(typeof(ProcessInformation));
+    }
 }

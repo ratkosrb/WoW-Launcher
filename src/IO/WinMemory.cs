@@ -1,342 +1,347 @@
 ﻿// Copyright (c) Arctium.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Threading.Tasks;
 using static Arctium.WoW.Launcher.Misc.NativeWindows;
 
-namespace Arctium.WoW.Launcher.IO;
-
-class WinMemory
+namespace Arctium.WoW.Launcher.IO
 {
-    public byte[] Data { get; set; }
-
-    public nint ProcessHandle { get; }
-    public nint BaseAddress { get; }
-
-    ProcessBasicInformation peb;
-
-    readonly Dictionary<string, (long Address, byte[] Data)> patchList;
-
-    public WinMemory(ProcessInformation processInformation, long binaryLength)
+    class WinMemory
     {
-        ProcessHandle = processInformation.ProcessHandle;
+        public byte[] Data { get; set; }
 
-        if (processInformation.ProcessHandle == 0)
-            throw new InvalidOperationException("No valid process found.");
+        public nint ProcessHandle { get; }
+        public nint BaseAddress { get; }
 
-        BaseAddress = ReadImageBaseFromPEB(processInformation.ProcessHandle);
+        ProcessBasicInformation peb;
 
-        if (BaseAddress == 0)
-            throw new InvalidOperationException("Error while reading PEB data.");
+        readonly Dictionary<string, (long Address, byte[] Data)> patchList;
 
-        Data = Read(BaseAddress, (int)binaryLength);
-
-        patchList = new();
-    }
-
-    public void RefreshMemoryData(int size)
-    {
-        // Reset previous memory data.
-        Data = null;
-
-        while (Data == null)
+        public WinMemory(ProcessInformation processInformation, long binaryLength)
         {
-            Console.WriteLine("Refreshing client data...");
+            ProcessHandle = processInformation.ProcessHandle;
 
-            Data = Read(BaseAddress, size);
-        }
-    }
+            if (processInformation.ProcessHandle == 0)
+                throw new InvalidOperationException("No valid process found.");
 
-    public nint Read(nint address)
-    {
-        try
-        {
-            var buffer = new byte[8];
+            BaseAddress = ReadImageBaseFromPEB(processInformation.ProcessHandle);
 
-            if (ReadProcessMemory(ProcessHandle, address, buffer, buffer.Length, out var dummy))
-                return buffer.ToNint();
+            if (BaseAddress == 0)
+                throw new InvalidOperationException("Error while reading PEB data.");
 
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine(ex.Message);
+            Data = Read(BaseAddress, (int)binaryLength);
+
+            patchList = new();
         }
 
-        return 0;
-    }
-
-    public nint Read(long address) => Read((nint)address);
-
-    public byte[] Read(nint address, int size)
-    {
-        try
+        public void RefreshMemoryData(int size)
         {
-            var buffer = new byte[size];
+            // Reset previous memory data.
+            Data = null;
 
-            if (ReadProcessMemory(ProcessHandle, address, buffer, size, out var dummy))
-                return buffer;
+            while (Data == null)
+            {
+                Console.WriteLine("Refreshing client data...");
 
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine(ex.Message);
+                Data = Read(BaseAddress, size);
+            }
         }
 
-        return null;
-    }
-
-    public byte[] Read(long address, int size) => Read((nint)address, size);
-
-    public int ReadDataLength(nint address, string seperator)
-    {
-        var length = 0L;
-        var seperatorBytes = Encoding.UTF8.GetBytes(seperator).Select(b => (short)b).ToArray();
-        var dataLength = 1000;
-
-        // Read in batches here.
-        while (length == 0)
+        public nint Read(nint address)
         {
-            length = Read(address, dataLength)?.FindPattern(seperatorBytes) ?? 0;
+            try
+            {
+                var buffer = new byte[8];
 
-            dataLength += 1000;
+                if (ReadProcessMemory(ProcessHandle, address, buffer, buffer.Length, out var dummy))
+                    return buffer.ToNint();
 
-            // Not found!
-            if (dataLength >= 100_000)
-                return -1;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+            }
+
+            return 0;
         }
 
-        return (int)length;
-    }
+        public nint Read(long address) => Read((nint)address);
 
-    public void Write(nint address, byte[] data, MemProtection newProtection = MemProtection.ReadWrite)
-    {
-        try
+        public byte[] Read(nint address, int size)
         {
-            VirtualProtectEx(ProcessHandle, address, (uint)data.Length, (uint)newProtection, out var oldProtect);
+            try
+            {
+                var buffer = new byte[size];
 
-            WriteProcessMemory(ProcessHandle, address, data, data.Length, out var written);
+                if (ReadProcessMemory(ProcessHandle, address, buffer, size, out var dummy))
+                    return buffer;
 
-            FlushInstructionCache(ProcessHandle, address, (uint)data.Length);
-            VirtualProtectEx(ProcessHandle, address, (uint)data.Length, oldProtect, out oldProtect);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+            }
 
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine(ex.Message);
-        }
-    }
-
-    public void Write(long address, byte[] data, MemProtection newProtection = MemProtection.ReadWrite) => Write((nint)address, data, newProtection);
-
-    public Task PatchMemory(short[] pattern, byte[] patch, string patchName)
-    {
-        Console.WriteLine($"[{patchName}] Patching...");
-
-        long patchOffset = Data.FindPattern(pattern, BaseAddress);
-
-        // No result for the given pattern.
-        if (patchOffset == 0)
-        {
-            Console.ForegroundColor = ConsoleColor.Yellow;
-
-            Console.WriteLine($"[{patchName}] No result found.");
-            Console.WriteLine("Press any key to exit...");
-            Console.ReadKey();
-
-            Program.CancellationTokenSource.Cancel();
+            return null;
         }
 
-        while (Read(patchOffset, patch.Length)?.SequenceEqual(patch) == false)
-            Write(patchOffset, patch);
+        public byte[] Read(long address, int size) => Read((nint)address, size);
 
-        Console.Write($"[{patchName}]");
-
-        Console.ForegroundColor = ConsoleColor.Green;
-
-        Console.WriteLine(" Done.");
-
-        Console.ForegroundColor = ConsoleColor.Gray;
-
-        Console.WriteLine();
-
-        return Task.CompletedTask;
-    }
-
-    public Task QueuePatch(long patchOffset, byte[] patch, string patchName)
-    {
-        Program.CancellationTokenSource.Token.ThrowIfCancellationRequested();
-
-        Console.WriteLine($"[{patchName}] Adding...");
-
-        patchList[patchName] = (patchOffset, patch);
-
-        Console.Write($"[{patchName}]");
-
-        Console.ForegroundColor = ConsoleColor.Green;
-
-        Console.WriteLine(" Done.");
-
-        Console.ForegroundColor = ConsoleColor.Gray;
-
-        Console.WriteLine();
-
-        return Task.CompletedTask;
-    }
-
-    public Task QueuePatch(short[] pattern, byte[] patch, string patchName, int offsetBase = 0)
-    {
-        long patchOffset = Data.FindPattern(pattern);
-
-        // No result for the given pattern.
-        if (patchOffset == 0)
+        public int ReadDataLength(nint address, string seperator)
         {
-            Console.ForegroundColor = ConsoleColor.Red;
+            var length = 0L;
+            var seperatorBytes = Encoding.UTF8.GetBytes(seperator).Select(b => (short)b).ToArray();
+            var dataLength = 1000;
 
-            Console.WriteLine($"[{patchName}] No result found.");
+            // Read in batches here.
+            while (length == 0)
+            {
+                length = Read(address, dataLength)?.FindPattern(seperatorBytes) ?? 0;
+
+                dataLength += 1000;
+
+                // Not found!
+                if (dataLength >= 100_000)
+                    return -1;
+            }
+
+            return (int)length;
+        }
+
+        public void Write(nint address, byte[] data, MemProtection newProtection = MemProtection.ReadWrite)
+        {
+            try
+            {
+                VirtualProtectEx(ProcessHandle, address, (uint)data.Length, (uint)newProtection, out var oldProtect);
+
+                WriteProcessMemory(ProcessHandle, address, data, data.Length, out var written);
+
+                FlushInstructionCache(ProcessHandle, address, (uint)data.Length);
+                VirtualProtectEx(ProcessHandle, address, (uint)data.Length, oldProtect, out oldProtect);
+
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+            }
+        }
+
+        public void Write(long address, byte[] data, MemProtection newProtection = MemProtection.ReadWrite) => Write((nint)address, data, newProtection);
+
+        public Task PatchMemory(short[] pattern, byte[] patch, string patchName)
+        {
+            Console.WriteLine($"[{patchName}] Patching...");
+
+            long patchOffset = Data.FindPattern(pattern, BaseAddress);
+
+            // No result for the given pattern.
+            if (patchOffset == 0)
+            {
+                Console.ForegroundColor = ConsoleColor.Yellow;
+
+                Console.WriteLine($"[{patchName}] No result found.");
+                Console.WriteLine("Press any key to exit...");
+                Console.ReadKey();
+
+                Program.CancellationTokenSource.Cancel();
+            }
+
+            while (Read(patchOffset, patch.Length)?.SequenceEqual(patch) == false)
+                Write(patchOffset, patch);
+
+            Console.Write($"[{patchName}]");
+
+            Console.ForegroundColor = ConsoleColor.Green;
+
+            Console.WriteLine(" Done.");
 
             Console.ForegroundColor = ConsoleColor.Gray;
 
-            Console.WriteLine("Press any key to exit...");
-            Console.ReadKey();
-
-            Program.CancellationTokenSource.Cancel();
+            Console.WriteLine();
 
             return Task.CompletedTask;
         }
 
-        return QueuePatch(patchOffset + offsetBase, patch, patchName);
-    }
-
-    public bool RemapAndPatch(nint viewAddress, int viewSize)
-    {
-        // Suspend before remapping to prevent crashes.
-        NtSuspendProcess(ProcessHandle);
-
-        Data = Read(viewAddress, viewSize);
-
-        if (Data != null)
+        public Task QueuePatch(long patchOffset, byte[] patch, string patchName)
         {
-            nint newViewHandle = 0;
-            var maxSize = new LargeInteger { Quad = viewSize };
+            Program.CancellationTokenSource.Token.ThrowIfCancellationRequested();
 
-            try
+            Console.WriteLine($"[{patchName}] Adding...");
+
+            patchList[patchName] = (patchOffset, patch);
+
+            Console.Write($"[{patchName}]");
+
+            Console.ForegroundColor = ConsoleColor.Green;
+
+            Console.WriteLine(" Done.");
+
+            Console.ForegroundColor = ConsoleColor.Gray;
+
+            Console.WriteLine();
+
+            return Task.CompletedTask;
+        }
+
+        public Task QueuePatch(short[] pattern, byte[] patch, string patchName, int offsetBase = 0)
+        {
+            long patchOffset = Data.FindPattern(pattern);
+
+            // No result for the given pattern.
+            if (patchOffset == 0)
             {
-                if (NtCreateSection(ref newViewHandle, 0xF001F, 0, ref maxSize, 0x40u, 0x8000000 | 0x400000, 0) == NtStatus.Success &&
-                    NtUnmapViewOfSection(ProcessHandle, viewAddress) == NtStatus.Success)
+                Console.ForegroundColor = ConsoleColor.Red;
+
+                Console.WriteLine($"[{patchName}] No result found.");
+
+                Console.ForegroundColor = ConsoleColor.Gray;
+
+                Console.WriteLine("Press any key to exit...");
+                Console.ReadKey();
+
+                Program.CancellationTokenSource.Cancel();
+
+                return Task.CompletedTask;
+            }
+
+            return QueuePatch(patchOffset + offsetBase, patch, patchName);
+        }
+
+        public bool RemapAndPatch(nint viewAddress, int viewSize)
+        {
+            // Suspend before remapping to prevent crashes.
+            NtSuspendProcess(ProcessHandle);
+
+            Data = Read(viewAddress, viewSize);
+
+            if (Data != null)
+            {
+                nint newViewHandle = 0;
+                var maxSize = new LargeInteger { Quad = viewSize };
+
+                try
                 {
-                    var viewBase = viewAddress;
-
-                    // Map the view with original protections.
-                    var result = NtMapViewOfSection(newViewHandle, ProcessHandle, ref viewBase, 0, (ulong)viewSize, out var viewOffset,
-                                           out var newViewSize, 2, 0, (int)MemProtection.ExecuteRead);
-
-                    if (result == NtStatus.Success)
+                    if (NtCreateSection(ref newViewHandle, 0xF001F, 0, ref maxSize, 0x40u, 0x8000000 | 0x400000, 0) == NtStatus.Success &&
+                        NtUnmapViewOfSection(ProcessHandle, viewAddress) == NtStatus.Success)
                     {
-                        // Apply our patches.
-                        foreach (var p in patchList)
-                        {
-                            var address = p.Value.Item1;
+                        var viewBase = viewAddress;
 
-                            if (address == 0)
-                                continue;
-
-                            var patch = p.Value.Item2;
-
-                            // We are in a different section here.
-                            if (address > Data.Length)
-                            {
-                                if (address < BaseAddress)
-                                    address += BaseAddress;
-
-                                Write(address, patch, MemProtection.ReadWrite);
-                                continue;
-                            }
-
-                            for (var i = 0; i < patch.Length; i++)
-                                Data[address + i] = patch[i];
-                        }
-
-                        nint viewBase2 = 0;
-
-                        // Create a writable view to write our patches through to preserve the original protections.
-                        result = NtMapViewOfSection(newViewHandle, ProcessHandle, ref viewBase2, 0, (uint)viewSize, out var viewOffset2,
-                                               out var newViewSize2, 2, 0, (int)MemProtection.ReadWrite);
+                        // Map the view with original protections.
+                        var result = NtMapViewOfSection(newViewHandle, ProcessHandle, ref viewBase, 0, (ulong)viewSize, out var viewOffset,
+                                               out var newViewSize, 2, 0, (int)MemProtection.ExecuteRead);
 
                         if (result == NtStatus.Success)
                         {
-                            // Write our patched data trough the writable view to the memory.
-                            if (WriteProcessMemory(ProcessHandle, viewBase2, Data, viewSize, out var dummy))
+                            // Apply our patches.
+                            foreach (var p in patchList)
                             {
-                                // Unmap them writeable view, it's not longer needed.
-                                NtUnmapViewOfSection(ProcessHandle, viewBase2);
+                                var address = p.Value.Item1;
 
-                                // Check if the allocation protections is the right one.
-                                if (VirtualQueryEx(ProcessHandle, BaseAddress, out MemoryBasicInformation mbi, MemoryBasicInformation.Size) != 0 && mbi.AllocationProtect == MemProtection.ExecuteRead)
+                                if (address == 0)
+                                    continue;
+
+                                var patch = p.Value.Item2;
+
+                                // We are in a different section here.
+                                if (address > Data.Length)
                                 {
-                                    // Also check if we can change the page protection.
-                                    if (!VirtualProtectEx(ProcessHandle, BaseAddress, 0x4000, (uint)MemProtection.ReadWrite, out var oldProtect))
-                                        NtResumeProcess(ProcessHandle);
+                                    if (address < BaseAddress)
+                                        address += BaseAddress;
 
-                                    return true;
+                                    Write(address, patch, MemProtection.ReadWrite);
+                                    continue;
+                                }
+
+                                for (var i = 0; i < patch.Length; i++)
+                                    Data[address + i] = patch[i];
+                            }
+
+                            nint viewBase2 = 0;
+
+                            // Create a writable view to write our patches through to preserve the original protections.
+                            result = NtMapViewOfSection(newViewHandle, ProcessHandle, ref viewBase2, 0, (uint)viewSize, out var viewOffset2,
+                                                   out var newViewSize2, 2, 0, (int)MemProtection.ReadWrite);
+
+                            if (result == NtStatus.Success)
+                            {
+                                // Write our patched data trough the writable view to the memory.
+                                if (WriteProcessMemory(ProcessHandle, viewBase2, Data, viewSize, out var dummy))
+                                {
+                                    // Unmap them writeable view, it's not longer needed.
+                                    NtUnmapViewOfSection(ProcessHandle, viewBase2);
+
+                                    // Check if the allocation protections is the right one.
+                                    if (VirtualQueryEx(ProcessHandle, BaseAddress, out MemoryBasicInformation mbi, MemoryBasicInformation.Size) != 0 && mbi.AllocationProtect == MemProtection.ExecuteRead)
+                                    {
+                                        // Also check if we can change the page protection.
+                                        if (!VirtualProtectEx(ProcessHandle, BaseAddress, 0x4000, (uint)MemProtection.ReadWrite, out var oldProtect))
+                                            NtResumeProcess(ProcessHandle);
+
+                                        return true;
+                                    }
                                 }
                             }
                         }
-                    }
 
-                    Console.WriteLine("Error while mapping the view with the given protection.");
+                        Console.WriteLine("Error while mapping the view with the given protection.");
+                    }
+                }
+                finally
+                {
+                    NtClose(newViewHandle);
                 }
             }
-            finally
+            else
+                Console.WriteLine("Error while creating the view backup.");
+
+            NtResumeProcess(ProcessHandle);
+
+            return false;
+        }
+
+        public bool RemapAndPatch()
+        {
+            if (VirtualQueryEx(ProcessHandle, BaseAddress, out MemoryBasicInformation mbi, MemoryBasicInformation.Size) != 0)
+                return RemapAndPatch(mbi.BaseAddress, (int)mbi.RegionSize);
+
+            return false;
+        }
+
+        /// Private functions.
+        nint ReadImageBaseFromPEB(nint processHandle)
+        {
+            try
             {
-                NtClose(newViewHandle);
+                if (NtQueryInformationProcess(processHandle, 0, ref peb, peb.Size, out int sizeInfoReturned) == NtStatus.Success)
+                    return Read(peb.PebBaseAddress + 0x10);
             }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex.Message);
+            }
+
+            return 0;
         }
-        else
-            Console.WriteLine("Error while creating the view backup.");
 
-        NtResumeProcess(ProcessHandle);
-
-        return false;
-    }
-
-    public bool RemapAndPatch()
-    {
-        if (VirtualQueryEx(ProcessHandle, BaseAddress, out MemoryBasicInformation mbi, MemoryBasicInformation.Size) != 0)
-            return RemapAndPatch(mbi.BaseAddress, (int)mbi.RegionSize);
-
-        return false;
-    }
-
-    /// Private functions.
-    nint ReadImageBaseFromPEB(nint processHandle)
-    {
-        try
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool IsShortJump(byte[] instructions, int startIndex = 0)
         {
-            if (NtQueryInformationProcess(processHandle, 0, ref peb, peb.Size, out int sizeInfoReturned) == NtStatus.Success)
-                return Read(peb.PebBaseAddress + 0x10);
+            return instructions[startIndex] >= 0x70 && instructions[startIndex] < 0x7F;
         }
-        catch (Exception ex)
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool IsJump(byte[] instructions, int startIndex = 0)
         {
-            Console.WriteLine(ex.Message);
+            return instructions[startIndex] == 0x0F && instructions[startIndex + 1] >= 0x80 && instructions[startIndex + 1] <= 0x8F;
         }
 
-        return 0;
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool IsShortJump(byte[] instructions, int startIndex = 0)
-    {
-        return instructions[startIndex] >= 0x70 && instructions[startIndex] < 0x7F;
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool IsJump(byte[] instructions, int startIndex = 0)
-    {
-        return instructions[startIndex] == 0x0F && instructions[startIndex + 1] >= 0x80 && instructions[startIndex + 1] <= 0x8F;
-    }
-
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    public bool IsUnconditionalJump(byte[] instructions, int startIndex = 0)
-    {
-        return instructions[startIndex] == 0xE9 || instructions[startIndex] == 0xEB;
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool IsUnconditionalJump(byte[] instructions, int startIndex = 0)
+        {
+            return instructions[startIndex] == 0xE9 || instructions[startIndex] == 0xEB;
+        }
     }
 }

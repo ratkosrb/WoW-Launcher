@@ -1,17 +1,18 @@
 ﻿// Copyright (c) Arctium.
 // Licensed under the MIT license. See LICENSE file in the project root for full license information.
 
-namespace Arctium.WoW.Launcher.Structures;
-
-[StructLayout(LayoutKind.Sequential, Pack = 1)]
-struct ProcessBasicInformation
+namespace Arctium.WoW.Launcher.Structures
 {
-    public nint ExitStatus;
-    public nint PebBaseAddress;
-    public nint AffinityMask;
-    public nint BasePriority;
-    public nint UniqueProcessId;
-    public nint InheritedFromUniqueProcessId;
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    struct ProcessBasicInformation
+    {
+        public nint ExitStatus;
+        public nint PebBaseAddress;
+        public nint AffinityMask;
+        public nint BasePriority;
+        public nint UniqueProcessId;
+        public nint InheritedFromUniqueProcessId;
 
-    public int Size => Marshal.SizeOf(typeof(ProcessBasicInformation));
+        public int Size => Marshal.SizeOf(typeof(ProcessBasicInformation));
+    }
 }
